@@ -13,14 +13,15 @@ mkdir -p /out
 go install github.com/theupdateframework/go-tuf/v2/examples/cli/tuf-client@v2.4.1
 
 # Bootstrap TUF from Sigstore's published root (10th iteration, per docs)
-curl -fsSL -o /tmp/sigstore-root.json \
+cd /tmp
+curl -fsSL -o root.json \
   https://raw.githubusercontent.com/sigstore/root-signing/refs/heads/main/metadata/root_history/10.root.json
-tuf-client init --url https://tuf-repo-cdn.sigstore.dev -f /tmp/sigstore-root.json
+tuf-client init --url https://tuf-repo-cdn.sigstore.dev -f root.json
 
 # Retrieve Sigstore's artifact verification key via TUF
-tuf-client get --url https://tuf-repo-cdn.sigstore.dev artifact.pub > /tmp/artifact.pub
+tuf-client get --url https://tuf-repo-cdn.sigstore.dev --turl https://tuf-repo-cdn.sigstore.dev/targets artifact.pub
 
-# Download cosign binary + KMS signature bundle
+# artifact.pub is downloaded to tuf_download/ in cwd (/tmp)
 ARCH=$(dpkg --print-architecture)
 curl -fsSL -o /out/cosign \
   "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-${ARCH}"
@@ -29,7 +30,7 @@ curl -fsSL -o /tmp/cosign-kms.sigstore.json \
 
 # Verify cosign binary with artifact key (per Sigstore docs for v3.x)
 cat /tmp/cosign-kms.sigstore.json | jq -r .messageSignature.signature | base64 -d > /tmp/cosign-kms.sig
-openssl dgst -sha256 -verify /tmp/artifact.pub -signature /tmp/cosign-kms.sig /out/cosign
+openssl dgst -sha256 -verify /tmp/tuf_download/artifact.pub -signature /tmp/cosign-kms.sig /out/cosign
 
 chmod +x /out/cosign
 EOF
