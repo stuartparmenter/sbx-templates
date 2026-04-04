@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=sandbox-templates:base
+ARG BASE_IMAGE=sbx-templates:base
 FROM ${BASE_IMAGE}
 
 ARG GO_VERSION=1.24.2
