@@ -1,41 +1,4 @@
-# --- Stage 1: Verify cosign binary via TUF root of trust ---
-FROM golang:1.26@sha256:ec4debba7b371fb2eaa6169a72fc61ad93b9be6a9ae9da2a010cb81a760d36e7 AS cosign-verify
-
-# renovate: datasource=github-releases depName=sigstore/cosign
-ARG COSIGN_VERSION=3.0.6
-
-RUN apt-get update && apt-get install -y --no-install-recommends jq && rm -rf /var/lib/apt/lists/*
-RUN <<EOF
-set -e
-mkdir -p /out
-
-# Install TUF client (v2)
-go install github.com/theupdateframework/go-tuf/v2/examples/cli/tuf-client@v2.4.1
-
-# Bootstrap TUF from Sigstore's published root (10th iteration, per docs)
-cd /tmp
-curl -fsSL -o root.json \
-  https://raw.githubusercontent.com/sigstore/root-signing/refs/heads/main/metadata/root_history/10.root.json
-tuf-client init --url https://tuf-repo-cdn.sigstore.dev -f root.json
-
-# Retrieve Sigstore's artifact verification key via TUF
-tuf-client get --url https://tuf-repo-cdn.sigstore.dev --turl https://tuf-repo-cdn.sigstore.dev/targets artifact.pub
-
-# artifact.pub is downloaded to tuf_download/ in cwd (/tmp)
-ARCH=$(dpkg --print-architecture)
-curl -fsSL -o /out/cosign \
-  "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-${ARCH}"
-curl -fsSL -o /tmp/cosign-kms.sigstore.json \
-  "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-${ARCH}-kms.sigstore.json"
-
-# Verify cosign binary with artifact key (per Sigstore docs for v3.x)
-cat /tmp/cosign-kms.sigstore.json | jq -r .messageSignature.signature | base64 -d > /tmp/cosign-kms.sig
-openssl dgst -sha256 -verify /tmp/tuf_download/artifact.pub -signature /tmp/cosign-kms.sig /out/cosign
-
-chmod +x /out/cosign
-EOF
-
-# --- Stage 2: Build gascity (gc) from source ---
+# --- Stage 1: Build gascity (gc) from source ---
 FROM golang:1.26@sha256:ec4debba7b371fb2eaa6169a72fc61ad93b9be6a9ae9da2a010cb81a760d36e7 AS gascity-build
 
 ARG GASCITY_VERSION=1af897c4001da28c55369a5a97d4a603fa60190e
@@ -49,11 +12,9 @@ git checkout FETCH_HEAD
 make install
 EOF
 
-# --- Stage 3: Main image ---
+# --- Stage 2: Main image ---
 FROM docker/sandbox-templates:claude-code-minimal@sha256:d17605375b77b3466732e39080014224626a9039538a2a8721b7ca3a7dea6bdd
 
-# renovate: datasource=github-releases depName=sigstore/gitsign
-ARG GITSIGN_VERSION=0.14.0
 # renovate: datasource=github-releases depName=dandavison/delta
 ARG DELTA_VERSION=0.19.2
 ARG DELTA_SHA256_AMD64=ea4f0222950ee750a3d38dd80d03bce4cee07a3f63928fc47548383bcaf23093
@@ -160,31 +121,12 @@ apt-get update && apt-get install -y --no-install-recommends \
 apt-get clean && rm -rf /var/lib/apt/lists/*
 EOF
 
-# Cosign (TUF-verified in stage 1)
-COPY --from=cosign-verify /out/cosign /usr/local/bin/cosign
-
-# gascity CLI (built from source in stage 2)
+# gascity CLI (built from source in stage 1)
 COPY --from=gascity-build /go/bin/gc /usr/local/bin/gc
 
 RUN <<EOF
 set -e
-
-# Gitsign (keyless commit signing via Sigstore) — verified with cosign
 ARCH=$(dpkg --print-architecture)
-GITSIGN_BASE="https://github.com/sigstore/gitsign/releases/download/v${GITSIGN_VERSION}"
-for bin in gitsign gitsign-credential-cache; do
-  ARTIFACT="${bin}_${GITSIGN_VERSION}_linux_${ARCH}"
-  curl -fsSL "${GITSIGN_BASE}/${ARTIFACT}" -o "/usr/local/bin/${bin}"
-  curl -fsSL "${GITSIGN_BASE}/${ARTIFACT}.sig" -o "/tmp/${bin}.sig"
-  curl -fsSL "${GITSIGN_BASE}/${ARTIFACT}.pem" -o "/tmp/${bin}.pem"
-  cosign verify-blob "/usr/local/bin/${bin}" \
-    --signature "/tmp/${bin}.sig" \
-    --certificate "/tmp/${bin}.pem" \
-    --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-    --certificate-identity-regexp "^https://github.com/sigstore/gitsign/"
-  rm "/tmp/${bin}.sig" "/tmp/${bin}.pem"
-  chmod +x "/usr/local/bin/${bin}"
-done
 
 # yq (jq for YAML)
 YQ_SHA256=$([ "$ARCH" = "amd64" ] && echo "$YQ_SHA256_AMD64" || echo "$YQ_SHA256_ARM64")
@@ -258,19 +200,13 @@ claude plugin install skill-creator@claude-plugins-official
 claude plugin install auto-format@stuart-plugins
 claude plugin install efficient-commands@stuart-plugins
 
-# Git config: delta pager + gitsign for commit signing
+# Git config: delta pager + diff/merge preferences
 git config --global core.pager delta
 git config --global interactive.diffFilter "delta --color-only"
 git config --global delta.navigate true
 git config --global delta.side-by-side true
 git config --global merge.conflictstyle zdiff3
-git config --global gpg.format x509
-git config --global gpg.x509.program gitsign
-git config --global commit.gpgsign true
-git config --global gitsign.connectorID "https://github.com/login/oauth"
 git config --global url."https://github.com/".insteadOf "git@github.com:"
-git config --global --unset gpg.ssh.program 2>/dev/null || true
-git config --global --unset core.sshcommand 2>/dev/null || true
 EOF
 
 ENV SHELL=/usr/bin/zsh

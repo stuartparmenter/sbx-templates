@@ -38,8 +38,6 @@ docker/sandbox-templates:claude-code-minimal
 
 | Tool | Description |
 |------|-------------|
-| [gitsign](https://github.com/sigstore/gitsign) | Keyless commit signing via Sigstore |
-| [cosign](https://github.com/sigstore/cosign) | Container/artifact signing (used to verify gitsign) |
 | [Socket Firewall](https://github.com/SocketDev/sfw-free) | Supply chain protection for package installs |
 
 ### Claude Code plugins
@@ -84,18 +82,18 @@ Binary dependencies are verified during the build:
 
 | Dependency | Verification method |
 |------------|-------------------|
-| **cosign** | [TUF](https://theupdateframework.io/) root of trust via Sigstore's `artifact.pub` key |
-| **gitsign** | cosign signature verification (Sigstore identity) |
-| **yq**, **delta** | SHA256 checksums (hardcoded, auto-updated by Renovate) |
+| **bun**, **yq**, **delta**, **sfw** | SHA256 checksums (hardcoded, auto-updated by Renovate) |
 | **apt packages** | GPG-signed repos (GitHub CLI, 1Password) |
+
+Output images are signed in CI with [cosign](https://github.com/sigstore/cosign) (keyless via GitHub OIDC).
 
 ## Dependency management
 
 [Renovate](https://github.com/renovatebot/renovate) tracks and auto-updates:
 
 - Upstream base image digest (`docker/sandbox-templates:claude-code-minimal`)
-- Tool versions (gitsign, cosign, delta, yq, Go)
+- Tool versions (bun, delta, yq, sfw, Go)
 - GitHub Actions versions
 - `golang` build stage digest
 
-Checksums for yq and delta are automatically recomputed via `postUpgradeTasks` when their versions are bumped.
+Checksums for bun, yq, delta, and sfw are automatically recomputed via `postUpgradeTasks` when their versions are bumped.
