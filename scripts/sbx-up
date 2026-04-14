@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.11"
+# ///
+"""Helper around `sbx create` for sbx-templates images."""
+
+from __future__ import annotations
+
+import argparse
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+TEMPLATE_NAMES = ("base", "bun", "golang", "python", "rust")
+TEMPLATE_IMAGE_FMT = "ghcr.io/stuartparmenter/sbx-templates/{name}:latest"
+STANDARD_NETWORK_ALLOWS = (
+    "**.socket.dev:443",
+    "mcp.context7.com:443",
+)
+SSH_AGENT_PROXY_DEFAULT_PORT = 7221
+SSH_AGENT_PROXY_SETUP_SCRIPT = "/usr/local/lib/ssh-agent-proxy-setup.sh"
+AGENT = "claude"
+SANDBOX_NAME_INVALID = re.compile(r"[^A-Za-z0-9.+-]+")
+
+
+def resolve_template(value: str) -> str:
+    if "/" in value or ":" in value:
+        return value
+    if value in TEMPLATE_NAMES:
+        return TEMPLATE_IMAGE_FMT.format(name=value)
+    raise SystemExit(
+        f"unknown template {value!r}. Known: {', '.join(TEMPLATE_NAMES)}. "
+        f"Pass a full image ref (containing '/' or ':') to use any other image."
+    )
+
+
+def parse_proxy_endpoint(value: str) -> tuple[str, int]:
+    if ":" in value:
+        host, _, port_s = value.rpartition(":")
+        try:
+            port = int(port_s)
+        except ValueError:
+            raise SystemExit(f"invalid port in --ssh-agent-proxy: {value!r}")
+    else:
+        host, port = value, SSH_AGENT_PROXY_DEFAULT_PORT
+    if not host:
+        raise SystemExit(f"empty host in --ssh-agent-proxy: {value!r}")
+    return host, port
+
+
+def default_sandbox_name(first_path: str) -> str:
+    workspace = first_path.split(":", 1)[0]
+    abspath = Path(workspace).resolve()
+    basename = abspath.name or abspath.parent.name
+    sanitized = SANDBOX_NAME_INVALID.sub("-", basename).strip("-") or "sandbox"
+    return f"{AGENT}-{sanitized}"
+
+
+def run(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
+    print(f"$ {' '.join(cmd)}", file=sys.stderr)
+    return subprocess.run(cmd, check=check)
+
+
+def cmd_setup(args: argparse.Namespace) -> int:
+    allows = list(STANDARD_NETWORK_ALLOWS)
+    if args.ssh_agent_proxy:
+        host, port = parse_proxy_endpoint(args.ssh_agent_proxy)
+        allows.append(f"{host}:{port}")
+    for resource in allows:
+        run(["sbx", "policy", "allow", "network", resource])
+    return 0
+
+
+def cmd_create(args: argparse.Namespace) -> int:
+    image = resolve_template(args.template)
+    name = args.name or default_sandbox_name(args.paths[0])
+
+    create_cmd = ["sbx", "create", "--template", image, "--name", name]
+    if args.branch:
+        create_cmd += ["--branch", args.branch]
+    create_cmd.append(AGENT)
+    create_cmd += args.paths
+    run(create_cmd)
+
+    if args.ssh_agent_proxy:
+        host, port = parse_proxy_endpoint(args.ssh_agent_proxy)
+        proxy_url = f"http://{host}:{port}/sign"
+        exec_cmd = [
+            "sbx", "exec",
+            "-e", f"SSH_AGENT_PROXY_URL={proxy_url}",
+            name,
+            "bash", SSH_AGENT_PROXY_SETUP_SCRIPT,
+        ]
+        result = run(exec_cmd, check=False)
+        if result.returncode != 0:
+            print(
+                f"warning: ssh-agent-proxy setup exec failed (exit {result.returncode}); "
+                f"sandbox is still usable.",
+                file=sys.stderr,
+            )
+
+    print(name)
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="sbx-up",
+        description="Helper around `sbx create` for sbx-templates images.",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_setup = sub.add_parser(
+        "setup",
+        help="Install standard global sbx network policies.",
+        description="Add standard global network allow policies for sbx sandboxes.",
+    )
+    p_setup.add_argument(
+        "--ssh-agent-proxy",
+        metavar="HOST[:PORT]",
+        help=f"Also allow an ssh-agent-proxy host (port defaults to {SSH_AGENT_PROXY_DEFAULT_PORT}).",
+    )
+    p_setup.set_defaults(func=cmd_setup)
+
+    p_create = sub.add_parser(
+        "create",
+        help="Create a claude sandbox using a sbx-templates image.",
+        description="Create a claude sandbox using a sbx-templates image and, if --ssh-agent-proxy is given, prime ssh-agent-proxy git signing.",
+    )
+    p_create.add_argument(
+        "-t", "--template", required=True,
+        metavar="NAME|IMAGE",
+        help=f"Template name ({'|'.join(TEMPLATE_NAMES)}) or full image ref.",
+    )
+    p_create.add_argument(
+        "--name",
+        help="Sandbox name (default: claude-<basename of first path>).",
+    )
+    p_create.add_argument(
+        "--branch",
+        help="Create a Git worktree on the given branch (forwarded to sbx create).",
+    )
+    p_create.add_argument(
+        "--ssh-agent-proxy",
+        metavar="HOST[:PORT]",
+        help=f"Host[:port] of ssh-agent-proxy to configure git signing after create (port defaults to {SSH_AGENT_PROXY_DEFAULT_PORT}).",
+    )
+    p_create.add_argument(
+        "paths", nargs="+", metavar="PATH",
+        help="Workspace paths (append ':ro' for read-only; first path is the main workspace).",
+    )
+    p_create.set_defaults(func=cmd_create)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return args.func(args)
+    except subprocess.CalledProcessError as e:
+        return e.returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())
