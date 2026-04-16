@@ -33,7 +33,7 @@ exec /opt/socket/bin/sfw /usr/bin/env bash -c '
   export CARGO_HTTP_CAINFO="$combined"
   export CARGO_HTTP_PROXY_CAINFO="$combined"
   /home/agent/.cargo/bin/cargo "$@"
-' -- "$@"
+' cargo "$@"
 SHIM
 chmod 755 /opt/socket/bin/cargo
 EOF
