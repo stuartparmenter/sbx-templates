@@ -113,8 +113,11 @@ curl -fsSL https://downloads.1password.com/linux/keys/1password.asc \
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/$(dpkg --print-architecture) stable main" \
     > /etc/apt/sources.list.d/1password.list
 
-# Single apt-get update + install for all packages
-apt-get update && apt-get install -y --no-install-recommends \
+# Single apt-get update + install for all packages. Not chained with && —
+# set -e exempts the left side of &&, so an `update` failure would silently
+# skip `install` and surface as a confusing missing-package error later.
+apt-get update
+apt-get install -y --no-install-recommends \
     build-essential \
     jq \
     tmux \
@@ -132,7 +135,8 @@ apt-get update && apt-get install -y --no-install-recommends \
     1password-cli
 
 # Cleanup apt caches
-apt-get clean && rm -rf /var/lib/apt/lists/*
+apt-get clean
+rm -rf /var/lib/apt/lists/*
 EOF
 
 RUN <<EOF
