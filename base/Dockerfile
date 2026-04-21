@@ -13,7 +13,7 @@ ARG BUN_VERSION=1.3.12
 ARG BUN_SHA256_AMD64=11dc3ee11bc1695e149737c6ca3d5619302cf4346e6b8a6ec7988967ef01ddc5
 ARG BUN_SHA256_ARM64=c40bc0ebca11bde7d75af497a654a874d0c7fd8d6a8d6031c173c10c9064297b
 # renovate: datasource=github-releases depName=SocketDev/sfw-free
-ARG SFW_VERSION=1.6.1
+ARG SFW_VERSION=1.7.2
 ARG SFW_SHA256_AMD64=4a1e8b65e90fce7d5fd066cf0af6c93d512065fa4222a475c8d959a6bc14b9ff
 ARG SFW_SHA256_ARM64=df2eedb2daf2572eee047adb8bfd81c9069edcb200fc7d3710fca98ec3ca81a1
 # renovate: datasource=github-releases depName=rui314/mold
